@@ -5,9 +5,11 @@ A one-screen Flutter app that plays your Rive file full-screen on **iPhone** and
 | Setting | Value |
 | --- | --- |
 | File | `assets/weatherbuddy.riv` |
-| Artboard | `MainScreen2` |
-| State machine | `MainStateMachine` |
+| Artboard | `Splash` (main full-screen artboard in this export) |
+| State machine | `Main State Machine` |
 | Fit | `Fit.layout` (fills and adapts to any screen size) |
+
+> **Name note:** The brief asked for artboard `MainScreen2` and state machine `MainStateMachine`. Those names are **not in this `.riv` file**. The synced export uses `Splash` + `Main State Machine` instead. If you re-export from Rive with the brief names, update `lib/main.dart` to match.
 
 No menus, settings, or extra UI — just the animation (plus a brief loading / error state).
 

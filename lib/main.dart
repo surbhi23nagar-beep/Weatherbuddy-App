@@ -41,6 +41,11 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen> {
     super.dispose();
   }
 
+  void _onRiveLoaded(RiveLoaded state) {
+    // This file starts on a splash/loading path — fire the trigger so Reveal plays.
+    state.controller.stateMachine.trigger('Loading completed')?.fire();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -48,9 +53,12 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen> {
       body: SizedBox.expand(
         child: RiveWidgetBuilder(
           fileLoader: _fileLoader,
-          artboardSelector: ArtboardSelector.byName('MainScreen2'),
+          // Names from this .riv export (brief's MainScreen2 / MainStateMachine
+          // are not present — Splash is the main full-screen artboard).
+          artboardSelector: ArtboardSelector.byName('Splash'),
           stateMachineSelector:
-              StateMachineSelector.byName('MainStateMachine'),
+              StateMachineSelector.byName('Main State Machine'),
+          onLoaded: _onRiveLoaded,
           builder: (context, state) => switch (state) {
             RiveLoading() => const ColoredBox(
                 color: Colors.black,

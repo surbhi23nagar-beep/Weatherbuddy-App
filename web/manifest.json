@@ -1,11 +1,11 @@
 {
-    "name": "weather_buddy",
-    "short_name": "weather_buddy",
+    "name": "Weather Buddy",
+    "short_name": "Weather Buddy",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "Full-screen Rive Weather Buddy.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
