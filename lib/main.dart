@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:rive/rive.dart';
+import 'package:weather_buddy/weather_binding.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,15 +36,42 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen> {
     riveFactory: Factory.rive,
   );
 
+  /// Bound MainViewModel — keep alive while the screen is showing.
+  MainViewModel? _main;
+  String? _bindError;
+
   @override
   void dispose() {
+    _main?.instance.dispose();
     _fileLoader.dispose();
     super.dispose();
   }
 
   void _onRiveLoaded(RiveLoaded state) {
-    // This file starts on a splash/loading path — fire the trigger so Reveal plays.
-    state.controller.stateMachine.trigger('Loading completed')?.fire();
+    try {
+      // Splash has no View Model assigned in the editor dropdown, so we bind
+      // MainViewModel's exported Instance explicitly.
+      final main = MainViewModel.bindTo(state.controller);
+      _main = main;
+
+      // --- Demo / test data from code ---
+      // ForecastDays already has 4 days (ensured in bindTo).
+      // Third day (index 2) → Heatwave; leave its Day label alone.
+      main.forecastDays[2].currentWeather = WeatherType.heatwave;
+
+      // Mirror onto SelectedForecast (hero) so the change is visible on screen.
+      // The bottom row needs MainViewModel assigned to Splash in the Rive editor
+      // for list cells to refresh from ForecastDays.
+      main.selectedForecast.currentWeather = WeatherType.heatwave;
+
+      // Reveal the main UI after splash loading (no ViewModel trigger in this .riv).
+      // ignore: deprecated_member_use
+      state.controller.stateMachine.trigger('Loading completed')?.fire();
+
+      setState(() => _bindError = null);
+    } catch (e) {
+      setState(() => _bindError = e.toString());
+    }
   }
 
   @override
@@ -53,8 +81,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen> {
       body: SizedBox.expand(
         child: RiveWidgetBuilder(
           fileLoader: _fileLoader,
-          // Names from this .riv export (brief's MainScreen2 / MainStateMachine
-          // are not present — Splash is the main full-screen artboard).
+          // Splash = main full-screen artboard in this .riv export.
           artboardSelector: ArtboardSelector.byName('Splash'),
           stateMachineSelector:
               StateMachineSelector.byName('Main State Machine'),
@@ -66,28 +93,41 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen> {
                   child: CircularProgressIndicator(color: Colors.white54),
                 ),
               ),
-            RiveFailed() => ColoredBox(
-                color: Colors.black,
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      'Couldn’t load Weather Buddy.\n${state.error}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 16,
-                        height: 1.4,
-                      ),
-                    ),
+            RiveFailed() => _ErrorPane('Couldn’t load Weather Buddy.\n${state.error}'),
+            RiveLoaded() => _bindError != null
+                ? _ErrorPane('Data binding failed.\n$_bindError')
+                : RiveWidget(
+                    controller: state.controller,
+                    fit: Fit.layout,
                   ),
-                ),
-              ),
-            RiveLoaded() => RiveWidget(
-                controller: state.controller,
-                fit: Fit.layout,
-              ),
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorPane extends StatelessWidget {
+  const _ErrorPane(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 16,
+              height: 1.4,
+            ),
+          ),
         ),
       ),
     );

@@ -8,16 +8,40 @@ A one-screen Flutter app that plays your Rive file full-screen on **iPhone** and
 | Artboard | `Splash` (main full-screen artboard in this export) |
 | State machine | `Main State Machine` |
 | Fit | `Fit.layout` (fills and adapts to any screen size) |
-
-> **Name note:** The brief asked for artboard `MainScreen2` and state machine `MainStateMachine`. Those names are **not in this `.riv` file**. The synced export uses `Splash` + `Main State Machine` instead. If you re-export from Rive with the brief names, update `lib/main.dart` to match.
+| View model | `MainViewModel` (bound from code) |
 
 No menus, settings, or extra UI — just the animation (plus a brief loading / error state).
 
-## What you need on your computer
+## Data binding (set values from code)
 
-1. **Flutter** — install from [flutter.dev](https://docs.flutter.dev/get-started/install)
-2. For iPhone: a **Mac** with **Xcode** (includes the iPhone Simulator)
-3. For Android: **Android Studio** (includes an emulator)
+Helpers live in `lib/weather_binding.dart`. Example:
+
+```dart
+main.location = 'Bangalore';
+main.forecastDays[2].currentWeather = WeatherType.heatwave; // 3rd day
+main.selectedForecast.currentDegree = 72;
+```
+
+### Brief name → name inside this `.riv` file
+
+Your Data Binding panel uses slightly different property paths than the brief. The Dart API uses the brief names; under the hood it writes to these Rive paths:
+
+| Brief (Dart API) | Path in this `.riv` |
+| --- | --- |
+| `Location` | `location` |
+| `ForecastDays` | `forecastdayz` |
+| `SelectedForecast` | `selectedday` |
+| `CurrentDegree` | `currentdegreenumber` |
+| `ToDegree` | `Todegree` |
+| `CurrentWeather` / `FromDegree` / `Day` | same |
+| ForecastDay view model | `forecastday:viewmodel` |
+| Enum value `Heatwave` | `Heatwave` |
+
+**Editor tip:** Splash currently has no View Model assigned in the artboard dropdown. For bindings to drive text/icons on that screen, assign **MainViewModel** to Splash in the Rive editor and re-export. The app still binds `MainViewModel` at runtime either way.
+
+### Current test in the app
+
+On load, the app sets the **third** ForecastDays item’s `CurrentWeather` to **Heatwave** (Day label unchanged) and keeps all **4** days in the list.
 
 ## Run on the iPhone Simulator (Mac)
 
@@ -27,29 +51,11 @@ open -a Simulator
 flutter run -d iPhone
 ```
 
-If several devices are listed, pick the iPhone simulator ID from `flutter devices`.
-
-## Run on an Android emulator
+## Preview in a browser
 
 ```bash
 flutter pub get
-flutter run -d android
-```
-
-## Preview in a browser (any computer)
-
-Useful when you don’t have a simulator handy:
-
-```bash
-flutter pub get
-flutter run -d chrome --web-port=43123
+flutter run -d web-server --web-hostname=0.0.0.0 --web-port=43123
 ```
 
 Then open [http://127.0.0.1:43123](http://127.0.0.1:43123).
-
-## Replace the animation later
-
-1. Export a new `.riv` from the Rive editor.
-2. Replace `assets/weatherbuddy.riv`.
-3. If you rename the artboard or state machine, update those names in `lib/main.dart`.
-4. Run the app again.
