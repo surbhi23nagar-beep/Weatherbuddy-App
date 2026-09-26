@@ -41,6 +41,8 @@ class _EffectLayer {
   final List<String> loopAnimations;
 }
 
+enum _OutfitPhase { idle, outro, intro }
+
 class WeatherBuddyScreen extends StatefulWidget {
   const WeatherBuddyScreen({super.key});
 
@@ -59,6 +61,12 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   final _effectIntroDone = <String>{};
   final _bgAnims = <String, rive.Animation>{};
   final _avoAnims = <String, rive.Animation>{};
+  rive.Animation? _avoOutro;
+
+  /// Avocado exit→enter: Outro (current goes down) then Set (next comes up).
+  var _outfitPhase = _OutfitPhase.idle;
+  String _outfitWeather = WeatherType.rainy;
+  String? _pendingOutfitWeather;
 
   /// Beach ball enter/exit. The .riv Beach ball artboard stays empty when
   /// driven from runtime (SM has no inputs; Start/SHOW/Hide don't paint),
@@ -242,6 +250,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
           if (avoController.artboard.animationNamed(e.value) case final a?)
             e.key: a,
       };
+      final avoOutro = avoController.artboard.animationNamed('Outro');
 
       final weather = main.selectedForecast.currentWeather;
       _syncWeatherTypeInputs(uiControllers, weather);
@@ -251,8 +260,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         if (!mounted) return;
         final next = main.selectedForecast.currentWeather;
         _onWeatherChanged(next);
-        _syncWeatherTypeInputs(uiControllers, next);
-        _snapOutfitTo(next);
+        _beginOutfitTransition(next);
         setState(() => _activeWeather = next);
       });
 
@@ -290,7 +298,10 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         _avoAnims
           ..clear()
           ..addAll(avoAnimsSafe);
+        _avoOutro = avoOutro;
         _activeWeather = weather;
+        _outfitWeather = weather;
+        _outfitPhase = _OutfitPhase.idle;
         _loading = false;
         _error = null;
       });
@@ -325,6 +336,73 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       for (final anim in _effectLoops[effect.artboard] ?? const []) {
         anim.time = 0;
       }
+    }
+  }
+
+  void _beginOutfitTransition(String next) {
+    if (next.isEmpty) return;
+    if (next == _outfitWeather &&
+        _pendingOutfitWeather == null &&
+        _outfitPhase == _OutfitPhase.idle) {
+      return;
+    }
+
+    _pendingOutfitWeather = next;
+
+    // Already exiting — finish Outro, then intro the latest pending weather.
+    if (_outfitPhase == _OutfitPhase.outro) return;
+
+    // Mid-intro of another outfit: treat that outfit as current and outro it.
+    if (_outfitPhase == _OutfitPhase.intro) {
+      final current = _avoAnims[_outfitWeather];
+      if (current != null) {
+        current.time = current.duration > 0 ? current.duration : 0;
+        current.apply();
+      }
+    }
+
+    _startOutfitOutro();
+  }
+
+  void _startOutfitOutro() {
+    // Keep weather-type on the CURRENT outfit so Outro sends THAT avocado down.
+    _syncWeatherTypeInputs(_uiControllers, _outfitWeather);
+    final current = _avoAnims[_outfitWeather];
+    if (current != null) {
+      current.time = current.duration > 0 ? current.duration : 0;
+      current.apply();
+    }
+    final bg = _bgAnims[_outfitWeather];
+    if (bg != null) {
+      bg.time = bg.duration > 0 ? bg.duration : 0;
+      bg.apply();
+    }
+
+    final outro = _avoOutro;
+    if (outro == null || outro.duration <= 0) {
+      _startOutfitIntro(_pendingOutfitWeather ?? _activeWeather);
+      return;
+    }
+    outro.time = 0;
+    _outfitPhase = _OutfitPhase.outro;
+  }
+
+  void _startOutfitIntro(String weather) {
+    _pendingOutfitWeather = null;
+    _outfitWeather = weather;
+    _outfitPhase = _OutfitPhase.intro;
+    // Swap weather-type only now so the new avocado is the one that rises.
+    _syncWeatherTypeInputs(_uiControllers, weather);
+
+    final set = _avoAnims[weather];
+    if (set != null) {
+      set.time = 0;
+    } else {
+      _outfitPhase = _OutfitPhase.idle;
+    }
+    final bg = _bgAnims[weather];
+    if (bg != null) {
+      bg.time = 0;
     }
   }
 
@@ -365,33 +443,73 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         selected.isNotEmpty &&
         selected != _activeWeather) {
       _onWeatherChanged(selected);
-      _syncWeatherTypeInputs(_uiControllers, selected);
-      _snapOutfitTo(selected);
+      _beginOutfitTransition(selected);
       _activeWeather = selected;
       if (mounted) setState(() {});
     }
 
-    final bgAnim = _bgAnims[_activeWeather];
+    // Background follows the outfit phase (old held, then new rises).
+    final bgWeather = _outfitPhase == _OutfitPhase.outro
+        ? _outfitWeather
+        : (_outfitPhase == _OutfitPhase.intro
+            ? _outfitWeather
+            : _activeWeather);
+    final bgAnim = _bgAnims[bgWeather];
     if (bgAnim != null) {
-      if (bgAnim.duration > 0 && bgAnim.time >= bgAnim.duration) {
+      if (_outfitPhase == _OutfitPhase.outro) {
+        bgAnim.time = bgAnim.duration > 0 ? bgAnim.duration : 0;
+        bgAnim.apply();
+      } else if (bgAnim.duration > 0 && bgAnim.time >= bgAnim.duration) {
         bgAnim.time = bgAnim.duration;
+        bgAnim.apply();
       } else {
         bgAnim.advanceAndApply(dt);
       }
-      bgAnim.apply();
       _uiControllers[0].active = true;
     }
 
-    final avoAnim = _avoAnims[_activeWeather];
-    if (avoAnim != null) {
-      if (avoAnim.duration > 0 && avoAnim.time >= avoAnim.duration) {
-        avoAnim.time = avoAnim.duration;
-      } else {
-        avoAnim.advanceAndApply(dt);
-      }
-      avoAnim.apply();
-      _uiControllers[2].active = true;
+    // Avocado: Outro (current goes down) → Set (next comes up).
+    // Pause the SM so it can't fight our Outro/Set timelines.
+    final avoController = _uiControllers[2];
+    avoController.active = false;
+    switch (_outfitPhase) {
+      case _OutfitPhase.outro:
+        final current = _avoAnims[_outfitWeather];
+        if (current != null) {
+          current.time = current.duration > 0 ? current.duration : 0;
+          current.apply();
+        }
+        final outro = _avoOutro;
+        if (outro == null) {
+          _startOutfitIntro(_pendingOutfitWeather ?? _activeWeather);
+        } else {
+          final playing = outro.advanceAndApply(dt);
+          if (!playing ||
+              (outro.duration > 0 && outro.time >= outro.duration)) {
+            outro.time = outro.duration;
+            outro.apply();
+            _startOutfitIntro(_pendingOutfitWeather ?? _activeWeather);
+          }
+        }
+      case _OutfitPhase.intro:
+        final intro = _avoAnims[_outfitWeather];
+        if (intro == null) {
+          _outfitPhase = _OutfitPhase.idle;
+        } else if (intro.duration > 0 && intro.time >= intro.duration) {
+          intro.time = intro.duration;
+          intro.apply();
+          _outfitPhase = _OutfitPhase.idle;
+        } else {
+          intro.advanceAndApply(dt);
+        }
+      case _OutfitPhase.idle:
+        final idle = _avoAnims[_outfitWeather];
+        if (idle != null) {
+          idle.time = idle.duration > 0 ? idle.duration : 0;
+          idle.apply();
+        }
     }
+    avoController.scheduleRepaint();
 
     for (final effect in _effects) {
       if (!effect.weathers.contains(_activeWeather)) continue;
@@ -429,6 +547,9 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   }
 
   void _snapOutfitTo(String weather) {
+    _outfitWeather = weather;
+    _outfitPhase = _OutfitPhase.idle;
+    _pendingOutfitWeather = null;
     final bg = _bgAnims[weather];
     if (bg != null) {
       bg.time = bg.duration > 0 ? bg.duration : 0;
@@ -439,6 +560,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       avo.time = avo.duration > 0 ? avo.duration : 0;
       avo.apply();
     }
+    _syncWeatherTypeInputs(_uiControllers, weather);
   }
 
   void _syncWeatherTypeInputs(
