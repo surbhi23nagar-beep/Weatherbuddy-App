@@ -22,7 +22,12 @@ class WeatherBuddyApp extends StatelessWidget {
   }
 }
 
-/// One full-screen Rive surface — no menus or chrome.
+/// Full Weather Buddy screen composed from the artboards in weatherbuddy.riv.
+///
+/// This export does not include a single "Main Screen 2" artboard — the editor
+/// preview is assembled from:
+///   Weather Bg + forecast detail + Avocado Master + forecast container
+/// All share one MainViewModel instance so list/day animations stay live.
 class WeatherBuddyScreen extends StatefulWidget {
   const WeatherBuddyScreen({super.key});
 
@@ -31,101 +36,149 @@ class WeatherBuddyScreen extends StatefulWidget {
 }
 
 class _WeatherBuddyScreenState extends State<WeatherBuddyScreen> {
-  late final FileLoader _fileLoader = FileLoader.fromAsset(
-    'assets/weatherbuddy.riv',
-    riveFactory: Factory.rive,
-  );
-
-  /// Bound MainViewModel — keep alive while the screen is showing.
+  File? _file;
   MainViewModel? _main;
-  String? _bindError;
+  final _controllers = <RiveWidgetController>[];
+  Object? _error;
+  var _loading = true;
+
+  static const _layers = <({String artboard, Alignment align})>[
+    (artboard: 'Weather Bg', align: Alignment.center),
+    (artboard: 'forecast detail', align: Alignment.topCenter),
+    (artboard: 'Avocado Master', align: Alignment.center),
+    (artboard: 'forecast container', align: Alignment.bottomCenter),
+  ];
 
   @override
-  void dispose() {
-    _main?.instance.dispose();
-    _fileLoader.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _bootstrap();
   }
 
-  void _onRiveLoaded(RiveLoaded state) {
+  Future<void> _bootstrap() async {
     try {
-      // Splash has no View Model assigned in the editor dropdown, so we bind
-      // MainViewModel's exported Instance explicitly.
-      final main = MainViewModel.bindTo(state.controller);
-      _main = main;
+      final file = await File.asset(
+        'assets/weatherbuddy.riv',
+        riveFactory: Factory.rive,
+      );
+      if (file == null) {
+        throw StateError('Could not decode weatherbuddy.riv');
+      }
 
-      // --- Demo / test data from code ---
-      // ForecastDays already has 4 days (ensured in bindTo).
-      // Third day (index 2) → Heatwave; leave its Day label alone.
+      // One MainViewModel instance shared across every layer.
+      final vm = file.viewModelByName(RiveProps.mainViewModel);
+      if (vm == null) {
+        throw StateError('MainViewModel not found in .riv');
+      }
+      final vmi = vm.createInstanceByName(RiveProps.mainInstance) ??
+          vm.createDefaultInstance();
+      if (vmi == null) {
+        throw StateError('MainViewModel Instance not found');
+      }
+
+      final controllers = <RiveWidgetController>[];
+      for (final layer in _layers) {
+        final controller = RiveWidgetController(
+          file,
+          artboardSelector: ArtboardSelector.byName(layer.artboard),
+          stateMachineSelector:
+              StateMachineSelector.byName('Main State Machine'),
+        );
+        controller.dataBind(DataBind.byInstance(vmi));
+        controllers.add(controller);
+      }
+
+      final main = MainViewModel(file, vmi);
+      main.ensureFourForecastDays();
+
+      // Demo: 3rd forecast day → Heatwave; keep Day labels + other days intact
+      // so each ForecastDay artboard keeps its authored animation.
       main.forecastDays[2].currentWeather = WeatherType.heatwave;
 
-      // Mirror onto SelectedForecast (hero) so the change is visible on screen.
-      // The bottom row needs MainViewModel assigned to Splash in the Rive editor
-      // for list cells to refresh from ForecastDays.
-      main.selectedForecast.currentWeather = WeatherType.heatwave;
+      if (!mounted) {
+        for (final c in controllers) {
+          c.dispose();
+        }
+        vmi.dispose();
+        file.dispose();
+        return;
+      }
 
-      // Reveal the main UI after splash loading (no ViewModel trigger in this .riv).
-      // ignore: deprecated_member_use
-      state.controller.stateMachine.trigger('Loading completed')?.fire();
-
-      setState(() => _bindError = null);
+      setState(() {
+        _file = file;
+        _main = main;
+        _controllers
+          ..clear()
+          ..addAll(controllers);
+        _loading = false;
+        _error = null;
+      });
     } catch (e) {
-      setState(() => _bindError = e.toString());
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e;
+      });
     }
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SizedBox.expand(
-        child: RiveWidgetBuilder(
-          fileLoader: _fileLoader,
-          // Splash = main full-screen artboard in this .riv export.
-          artboardSelector: ArtboardSelector.byName('Splash'),
-          stateMachineSelector:
-              StateMachineSelector.byName('Main State Machine'),
-          onLoaded: _onRiveLoaded,
-          builder: (context, state) => switch (state) {
-            RiveLoading() => const ColoredBox(
-                color: Colors.black,
-                child: Center(
-                  child: CircularProgressIndicator(color: Colors.white54),
-                ),
-              ),
-            RiveFailed() => _ErrorPane('Couldn’t load Weather Buddy.\n${state.error}'),
-            RiveLoaded() => _bindError != null
-                ? _ErrorPane('Data binding failed.\n$_bindError')
-                : RiveWidget(
-                    controller: state.controller,
-                    fit: Fit.layout,
-                  ),
-          },
-        ),
-      ),
-    );
+  void dispose() {
+    for (final c in _controllers) {
+      c.dispose();
+    }
+    _main?.instance.dispose();
+    _file?.dispose();
+    super.dispose();
   }
-}
-
-class _ErrorPane extends StatelessWidget {
-  const _ErrorPane(this.message);
-
-  final String message;
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: Colors.black,
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            message,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-              height: 1.4,
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF9EC9E6),
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.white70),
+        ),
+      );
+    }
+
+    if (_error != null || _controllers.length != _layers.length) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Couldn’t load Weather Buddy.\n$_error',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 16,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF9EC9E6),
+      body: SafeArea(
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: 9 / 19.5,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                for (var i = 0; i < _layers.length; i++)
+                  RiveWidget(
+                    controller: _controllers[i],
+                    fit: Fit.contain,
+                    alignment: _layers[i].align,
+                  ),
+              ],
             ),
           ),
         ),

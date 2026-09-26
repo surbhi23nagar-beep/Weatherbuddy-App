@@ -1,61 +1,45 @@
 # Weather Buddy
 
-A one-screen Flutter app that plays your Rive file full-screen on **iPhone** and **Android**.
+A one-screen Flutter app that plays your Rive weather UI full-screen on **iPhone** and **Android**.
 
-| Setting | Value |
-| --- | --- |
-| File | `assets/weatherbuddy.riv` |
-| Artboard | `Splash` (main full-screen artboard in this export) |
-| State machine | `Main State Machine` |
-| Fit | `Fit.layout` (fills and adapts to any screen size) |
-| View model | `MainViewModel` (bound from code) |
+## What’s on screen
 
-No menus, settings, or extra UI — just the animation (plus a brief loading / error state).
+This `.riv` export doesn’t include a single artboard named `Main Screen 2`. The editor preview is assembled from several artboards; the app composites them and binds **one** shared `MainViewModel`:
 
-## Data binding (set values from code)
+| Layer | Artboard | Role |
+| --- | --- | --- |
+| Background | `Weather Bg` | Full-bleed sky |
+| Hero text | `forecast detail` | Location, temps, weather label |
+| Character | `Avocado Master` | Buddy + weather outfit animations |
+| Day row | `forecast container` | 4-day `ForecastDays` list (each day keeps its animation) |
 
-Helpers live in `lib/weather_binding.dart`. Example:
+State machine on each layer: `Main State Machine`.
 
-```dart
-main.location = 'Bangalore';
-main.forecastDays[2].currentWeather = WeatherType.heatwave; // 3rd day
-main.selectedForecast.currentDegree = 72;
-```
+## Data binding
 
-### Brief name → name inside this `.riv` file
-
-Your Data Binding panel uses slightly different property paths than the brief. The Dart API uses the brief names; under the hood it writes to these Rive paths:
+Helpers: `lib/weather_binding.dart`
 
 | Brief (Dart API) | Path in this `.riv` |
 | --- | --- |
-| `Location` | `location` |
-| `ForecastDays` | `forecastdayz` |
-| `SelectedForecast` | `selectedday` |
-| `CurrentDegree` | `currentdegreenumber` |
-| `ToDegree` | `Todegree` |
-| `CurrentWeather` / `FromDegree` / `Day` | same |
-| ForecastDay view model | `forecastday:viewmodel` |
-| Enum value `Heatwave` | `Heatwave` |
+| Location | `location` |
+| ForecastDays | `forecastdayz` |
+| SelectedForecast | `selectedday` |
+| CurrentDegree | `currentdegreenumber` |
+| ToDegree | `Todegree` |
+| CurrentWeather / FromDegree / Day | same |
 
-**Editor tip:** Splash currently has no View Model assigned in the artboard dropdown. For bindings to drive text/icons on that screen, assign **MainViewModel** to Splash in the Rive editor and re-export. The app still binds `MainViewModel` at runtime either way.
+On load, the **3rd** forecast day is set to **Heatwave** (Day label unchanged).
 
-### Current test in the app
-
-On load, the app sets the **third** ForecastDays item’s `CurrentWeather` to **Heatwave** (Day label unchanged) and keeps all **4** days in the list.
-
-## Run on the iPhone Simulator (Mac)
-
-```bash
-flutter pub get
-open -a Simulator
-flutter run -d iPhone
-```
-
-## Preview in a browser
+## Run
 
 ```bash
 flutter pub get
 flutter run -d web-server --web-hostname=0.0.0.0 --web-port=43123
+# or on a Mac: open -a Simulator && flutter run -d iPhone
 ```
 
-Then open [http://127.0.0.1:43123](http://127.0.0.1:43123).
+Open [http://127.0.0.1:43123](http://127.0.0.1:43123).
+
+## Prefer a single artboard?
+
+In the Rive editor, export an updated `.riv` that includes **Main Screen 2** as one artboard (with MainViewModel assigned). Replace `assets/weatherbuddy.riv` and we can switch the app back to a single full-screen artboard with `Fit.layout`.
