@@ -139,8 +139,8 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       duration: const Duration(milliseconds: 900),
     );
     _ballAlign = AlignmentTween(
-      begin: const Alignment(1.6, 0.35),
-      end: const Alignment(0.55, 0.25),
+      begin: const Alignment(1.7, 0.45),
+      end: const Alignment(0.72, 0.32),
     ).animate(CurvedAnimation(parent: _ballMotion, curve: Curves.easeOutBack));
     _bootstrap();
   }
