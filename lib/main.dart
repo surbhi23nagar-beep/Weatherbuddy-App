@@ -34,7 +34,7 @@ class _EffectLayer {
   final String artboard;
   final Set<String> weathers;
 
-  /// Play once to end when the weather becomes active (e.g. SHOW).
+  /// Play once when the weather becomes active (e.g. SHOW).
   final List<String> introAnimations;
 
   /// Continuous loops (sun glow/rotation, rain, leaves, snow, clouds).
@@ -49,7 +49,7 @@ class WeatherBuddyScreen extends StatefulWidget {
 }
 
 class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   rive.File? _file;
   MainViewModel? _main;
   final _uiControllers = <rive.RiveWidgetController>[];
@@ -60,12 +60,13 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   final _bgAnims = <String, rive.Animation>{};
   final _avoAnims = <String, rive.Animation>{};
 
-  /// Beach ball enter (SHOW/Start) vs exit (Hide).
-  rive.Animation? _ballShow;
-  rive.Animation? _ballStart;
-  rive.Animation? _ballHide;
-  var _ballExiting = false;
+  /// Beach ball enter/exit. The .riv Beach ball artboard stays empty when
+  /// driven from runtime (SM has no inputs; Start/SHOW/Hide don't paint),
+  /// so we animate a matching Flutter beach ball instead.
   var _ballVisible = false;
+  var _ballExiting = false;
+  late final AnimationController _ballMotion;
+  late final Animation<Alignment> _ballAlign;
 
   Object? _error;
   var _loading = true;
@@ -107,11 +108,11 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       introAnimations: ['Start', 'SHOW'],
       loopAnimations: ['Snow'],
     ),
-    // Leaves fall on the rainy screen.
+    // Leaves fall on the rainy screen (drawn with precipitation).
     _EffectLayer(
       artboard: 'leaves',
       weathers: {WeatherType.rainy},
-      introAnimations: ['SHOW', 'Start'],
+      introAnimations: ['SHOW'],
       loopAnimations: ['leaves'],
     ),
     _EffectLayer(
@@ -133,6 +134,14 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   @override
   void initState() {
     super.initState();
+    _ballMotion = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _ballAlign = AlignmentTween(
+      begin: const Alignment(1.6, 0.35),
+      end: const Alignment(0.55, 0.25),
+    ).animate(CurvedAnimation(parent: _ballMotion, curve: Curves.easeOutBack));
     _bootstrap();
   }
 
@@ -199,17 +208,6 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         ];
       }
 
-      // Beach ball: enters on Heatwave, exits (Hide) on every other weather.
-      final ballController = _controllerFor(
-        file,
-        'Beach ball',
-        stateMachine: 'State Machine 1',
-      );
-      effectControllers['Beach ball'] = ballController;
-      final ballShow = ballController.artboard.animationNamed('SHOW');
-      final ballStart = ballController.artboard.animationNamed('Start');
-      final ballHide = ballController.artboard.animationNamed('Hide');
-
       final main = MainViewModel(file, vmi);
       main.ensureFourForecastDays();
 
@@ -255,9 +253,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         _onWeatherChanged(next);
         _syncWeatherTypeInputs(uiControllers, next);
         _snapOutfitTo(next);
-        setState(() {
-          _activeWeather = next;
-        });
+        setState(() => _activeWeather = next);
       });
 
       if (!mounted) {
@@ -294,9 +290,6 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         _avoAnims
           ..clear()
           ..addAll(avoAnimsSafe);
-        _ballShow = ballShow;
-        _ballStart = ballStart;
-        _ballHide = ballHide;
         _activeWeather = weather;
         _loading = false;
         _error = null;
@@ -342,16 +335,20 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
     _resetEffectIntrosFor(weather);
 
     if (isHeat && !wasHeat) {
-      // Ball enters heatwave screen.
       _ballExiting = false;
       _ballVisible = true;
-      _ballShow?.time = 0;
-      _ballStart?.time = 0;
-      _ballHide?.time = 0;
+      _ballMotion.forward(from: 0);
+      if (mounted) setState(() {});
     } else if (!isHeat && (wasHeat || _ballVisible)) {
-      // Ball exits on every other screen.
       _ballExiting = true;
-      _ballHide?.time = 0;
+      _ballMotion.reverse().whenComplete(() {
+        if (!mounted) return;
+        setState(() {
+          _ballExiting = false;
+          _ballVisible = false;
+        });
+      });
+      if (mounted) setState(() {});
     }
   }
 
@@ -361,6 +358,18 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         : (elapsed - _lastTick).inMicroseconds / 1e6;
     _lastTick = elapsed;
     if (dt <= 0 || dt > 0.1) return;
+
+    // Keep Flutter FX in sync when day selection rebinds selectedday.
+    final selected = _main?.selectedForecast.currentWeather;
+    if (selected != null &&
+        selected.isNotEmpty &&
+        selected != _activeWeather) {
+      _onWeatherChanged(selected);
+      _syncWeatherTypeInputs(_uiControllers, selected);
+      _snapOutfitTo(selected);
+      _activeWeather = selected;
+      if (mounted) setState(() {});
+    }
 
     final bgAnim = _bgAnims[_activeWeather];
     if (bgAnim != null) {
@@ -390,19 +399,24 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       final loops = _effectLoops[effect.artboard] ?? const <rive.Animation>[];
       if (intros.isEmpty && loops.isEmpty) continue;
 
-      var introsComplete = true;
-      for (final anim in intros) {
-        if (anim.duration > 0 && anim.time >= anim.duration) {
-          anim.time = anim.duration;
-          anim.apply();
-        } else {
-          anim.advanceAndApply(dt);
-          introsComplete = false;
+      var introsComplete = _effectIntroDone.contains(effect.artboard);
+      if (!introsComplete) {
+        introsComplete = true;
+        for (final anim in intros) {
+          if (anim.duration > 0 && anim.time >= anim.duration) {
+            anim.time = anim.duration;
+            anim.apply();
+          } else {
+            anim.advanceAndApply(dt);
+            introsComplete = false;
+          }
+        }
+        if (introsComplete) {
+          _effectIntroDone.add(effect.artboard);
         }
       }
-      if (introsComplete) {
-        _effectIntroDone.add(effect.artboard);
-        // Continuous FX only after intro settles (keeps sun rotation intact).
+
+      if (introsComplete || intros.isEmpty) {
         for (final anim in loops) {
           if (anim.duration > 0 && anim.time >= anim.duration) {
             anim.time = 0;
@@ -411,46 +425,6 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         }
       }
       _effectControllers[effect.artboard]?.active = true;
-    }
-
-    // Beach ball enter / exit
-    final ballController = _effectControllers['Beach ball'];
-    if (ballController != null) {
-      if (_ballExiting) {
-        final hide = _ballHide;
-        if (hide != null) {
-          final playing = hide.advanceAndApply(dt);
-          if (!playing ||
-              (hide.duration > 0 && hide.time >= hide.duration)) {
-            _ballExiting = false;
-            _ballVisible = false;
-            hide.time = hide.duration;
-            hide.apply();
-          }
-        } else {
-          _ballExiting = false;
-          _ballVisible = false;
-        }
-        ballController.active = true;
-      } else if (_activeWeather == WeatherType.heatwave && _ballVisible) {
-        final show = _ballShow;
-        final start = _ballStart;
-        if (show != null) {
-          if (show.duration > 0 && show.time >= show.duration) {
-            show.time = show.duration;
-            show.apply();
-          } else {
-            show.advanceAndApply(dt);
-          }
-        }
-        if (start != null) {
-          if (start.duration > 0 && start.time >= start.duration) {
-            start.time = 0; // keep bouncing/rolling while heatwave stays
-          }
-          start.advanceAndApply(dt);
-        }
-        ballController.active = true;
-      }
     }
   }
 
@@ -485,12 +459,11 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   }
 
   bool _isPrecipitation(String artboard) =>
-      artboard == 'WEATHER RAIN' || artboard == 'weather snow MEDIUM';
+      artboard == 'WEATHER RAIN' ||
+      artboard == 'weather snow MEDIUM' ||
+      artboard == 'leaves';
 
   bool _showEffect(String artboard) {
-    if (artboard == 'Beach ball') {
-      return _ballVisible || _ballExiting;
-    }
     final effect = _effects.cast<_EffectLayer?>().firstWhere(
           (e) => e?.artboard == artboard,
           orElse: () => null,
@@ -501,6 +474,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   @override
   void dispose() {
     _fxTicker?.dispose();
+    _ballMotion.dispose();
     for (final c in _uiControllers) {
       c.dispose();
     }
@@ -546,7 +520,6 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
     final atmosphere = [
       for (final effect in _effects)
         if (!_isPrecipitation(effect.artboard)) effect.artboard,
-      'Beach ball',
     ];
     final precipitation = [
       for (final effect in _effects)
@@ -605,6 +578,26 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
                         ),
                       ),
                     ),
+                // Beach ball enters on Heatwave, exits on other screens.
+                if (_ballVisible || _ballExiting)
+                  IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _ballAlign,
+                      builder: (context, child) {
+                        return Align(
+                          alignment: _ballAlign.value,
+                          child: child,
+                        );
+                      },
+                      child: FractionallySizedBox(
+                        widthFactor: 0.2,
+                        child: AspectRatio(
+                          aspectRatio: 1,
+                          child: CustomPaint(painter: _BeachBallPainter()),
+                        ),
+                      ),
+                    ),
+                  ),
                 // Forecast buttons — icons + temps only (no avocados).
                 rive.RiveWidget(
                   controller: _uiControllers[3],
@@ -618,4 +611,44 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       ),
     );
   }
+}
+
+class _BeachBallPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.shortestSide / 2;
+    final colors = <Color>[
+      const Color(0xFFE85D4C),
+      const Color(0xFFF5D76E),
+      const Color(0xFF4AA3DF),
+      const Color(0xFFF7F7F7),
+    ];
+    for (var i = 0; i < colors.length; i++) {
+      final start = -1.2 + (i * 1.55);
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        start,
+        1.55,
+        true,
+        Paint()..color = colors[i],
+      );
+    }
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = radius * 0.06
+        ..color = const Color(0x33000000),
+    );
+    canvas.drawCircle(
+      center.translate(-radius * 0.25, -radius * 0.28),
+      radius * 0.18,
+      Paint()..color = const Color(0x55FFFFFF),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
