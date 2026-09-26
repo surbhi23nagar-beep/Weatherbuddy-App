@@ -27,11 +27,17 @@ class _EffectLayer {
   const _EffectLayer({
     required this.artboard,
     required this.weathers,
-    required this.loopAnimations,
+    this.introAnimations = const ['SHOW'],
+    this.loopAnimations = const [],
   });
 
   final String artboard;
   final Set<String> weathers;
+
+  /// Play once to end when the weather becomes active (e.g. SHOW).
+  final List<String> introAnimations;
+
+  /// Continuous loops (sun glow/rotation, rain, leaves, snow, clouds).
   final List<String> loopAnimations;
 }
 
@@ -48,18 +54,18 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   MainViewModel? _main;
   final _uiControllers = <rive.RiveWidgetController>[];
   final _effectControllers = <String, rive.RiveWidgetController>{};
+  final _effectIntros = <String, List<rive.Animation>>{};
   final _effectLoops = <String, List<rive.Animation>>{};
+  final _effectIntroDone = <String>{};
   final _bgAnims = <String, rive.Animation>{};
   final _avoAnims = <String, rive.Animation>{};
 
-  /// Mini avocado artboards shown in the 4-day row (icons alone aren't enough).
-  final _dayAvoControllers = <String, rive.RiveWidgetController>{};
-  final _dayWeathers = <String>[
-    WeatherType.clearSkies,
-    WeatherType.heatwave,
-    WeatherType.snowy,
-    WeatherType.rainy,
-  ];
+  /// Beach ball enter (SHOW/Start) vs exit (Hide).
+  rive.Animation? _ballShow;
+  rive.Animation? _ballStart;
+  rive.Animation? _ballHide;
+  var _ballExiting = false;
+  var _ballVisible = false;
 
   Object? _error;
   var _loading = true;
@@ -75,43 +81,38 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
     (artboard: 'forecast container', align: Alignment.bottomCenter),
   ];
 
-  static const _dayAvoArtboards = <String, String>{
-    WeatherType.clearSkies: 'Avo Clear Sky',
-    WeatherType.heatwave: 'Avo Heatwave',
-    WeatherType.snowy: 'Avosnowy',
-    WeatherType.rainy: 'Avo Rainy',
-  };
-
   static const _effects = <_EffectLayer>[
+    // Yellow sun — SHOW once, then glow loops (sun rotation).
     _EffectLayer(
       artboard: 'WEather sun',
       weathers: {WeatherType.clearSkies},
-      loopAnimations: ['SHOW', 'glow'],
+      introAnimations: ['SHOW'],
+      loopAnimations: ['glow'],
     ),
     _EffectLayer(
       artboard: 'weather red sun',
       weathers: {WeatherType.heatwave},
-      loopAnimations: ['SHOW', 'ripple idle'],
+      introAnimations: ['SHOW'],
+      loopAnimations: ['ripple idle'],
     ),
     _EffectLayer(
       artboard: 'WEATHER RAIN',
       weathers: {WeatherType.rainy},
-      loopAnimations: ['SHOW', 'rain'],
+      introAnimations: ['SHOW'],
+      loopAnimations: ['rain'],
     ),
     _EffectLayer(
       artboard: 'weather snow MEDIUM',
       weathers: {WeatherType.snowy},
-      loopAnimations: ['Start', 'SHOW', 'Snow'],
+      introAnimations: ['Start', 'SHOW'],
+      loopAnimations: ['Snow'],
     ),
+    // Leaves fall on the rainy screen.
     _EffectLayer(
       artboard: 'leaves',
-      weathers: {WeatherType.clearSkies},
-      loopAnimations: ['SHOW', 'Start', 'leaves'],
-    ),
-    _EffectLayer(
-      artboard: 'Beach ball',
-      weathers: {WeatherType.clearSkies, WeatherType.heatwave},
-      loopAnimations: ['SHOW', 'Start'],
+      weathers: {WeatherType.rainy},
+      introAnimations: ['SHOW', 'Start'],
+      loopAnimations: ['leaves'],
     ),
     _EffectLayer(
       artboard: 'clouds componenet',
@@ -120,8 +121,8 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         WeatherType.rainy,
         WeatherType.snowy,
       },
+      introAnimations: ['SHOW'],
       loopAnimations: [
-        'SHOW',
         'clouds idle',
         'Big clouds idle',
         'small clouds idle 2',
@@ -138,14 +139,12 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   rive.RiveWidgetController _controllerFor(
     rive.File file,
     String artboard, {
-    String? stateMachine,
+    required String stateMachine,
   }) {
     return rive.RiveWidgetController(
       file,
       artboardSelector: rive.ArtboardSelector.byName(artboard),
-      stateMachineSelector: stateMachine == null
-          ? const rive.StateMachineDefault()
-          : rive.StateMachineSelector.byName(stateMachine),
+      stateMachineSelector: rive.StateMachineSelector.byName(stateMachine),
     );
   }
 
@@ -181,6 +180,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       }
 
       final effectControllers = <String, rive.RiveWidgetController>{};
+      final effectIntros = <String, List<rive.Animation>>{};
       final effectLoops = <String, List<rive.Animation>>{};
       for (final effect in _effects) {
         final controller = _controllerFor(
@@ -189,36 +189,37 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
           stateMachine: 'State Machine 1',
         );
         effectControllers[effect.artboard] = controller;
+        effectIntros[effect.artboard] = [
+          for (final name in effect.introAnimations)
+            if (controller.artboard.animationNamed(name) case final anim?) anim,
+        ];
         effectLoops[effect.artboard] = [
           for (final name in effect.loopAnimations)
             if (controller.artboard.animationNamed(name) case final anim?) anim,
         ];
       }
 
-      // One controller per weather avocado used in the forecast row.
-      final dayAvoControllers = <String, rive.RiveWidgetController>{};
-      for (final entry in _dayAvoArtboards.entries) {
-        dayAvoControllers[entry.key] = _controllerFor(file, entry.value);
-      }
+      // Beach ball: enters on Heatwave, exits (Hide) on every other weather.
+      final ballController = _controllerFor(
+        file,
+        'Beach ball',
+        stateMachine: 'State Machine 1',
+      );
+      effectControllers['Beach ball'] = ballController;
+      final ballShow = ballController.artboard.animationNamed('SHOW');
+      final ballStart = ballController.artboard.animationNamed('Start');
+      final ballHide = ballController.artboard.animationNamed('Hide');
 
       final main = MainViewModel(file, vmi);
       main.ensureFourForecastDays();
 
-      // Today Clear · Tue Heatwave · Wed Snow avocado · Thu Rainy avocado
+      // Forecast row: icons only (no avocados on the buttons).
       main.forecastDays[0].currentWeather = WeatherType.clearSkies;
       main.forecastDays[1].currentWeather = WeatherType.heatwave;
       main.forecastDays[2].currentWeather = WeatherType.snowy;
       main.forecastDays[3].currentWeather = WeatherType.rainy;
-      _dayWeathers
-        ..clear()
-        ..addAll([
-          WeatherType.clearSkies,
-          WeatherType.heatwave,
-          WeatherType.snowy,
-          WeatherType.rainy,
-        ]);
 
-      // Hero = rainy avocado + rainy background + rain FX
+      // Hero starts Rainy → rain + falling leaves.
       main.selectedForecast.currentWeather = WeatherType.rainy;
 
       final bgController = uiControllers[0];
@@ -251,9 +252,12 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
           ?.addListener((_) {
         if (!mounted) return;
         final next = main.selectedForecast.currentWeather;
+        _onWeatherChanged(next);
         _syncWeatherTypeInputs(uiControllers, next);
         _snapOutfitTo(next);
-        setState(() => _activeWeather = next);
+        setState(() {
+          _activeWeather = next;
+        });
       });
 
       if (!mounted) {
@@ -261,9 +265,6 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
           c.dispose();
         }
         for (final c in effectControllers.values) {
-          c.dispose();
-        }
-        for (final c in dayAvoControllers.values) {
           c.dispose();
         }
         vmi.dispose();
@@ -280,24 +281,30 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         _effectControllers
           ..clear()
           ..addAll(effectControllers);
+        _effectIntros
+          ..clear()
+          ..addAll(effectIntros);
         _effectLoops
           ..clear()
           ..addAll(effectLoops);
+        _effectIntroDone.clear();
         _bgAnims
           ..clear()
           ..addAll(bgAnimsSafe);
         _avoAnims
           ..clear()
           ..addAll(avoAnimsSafe);
-        _dayAvoControllers
-          ..clear()
-          ..addAll(dayAvoControllers);
+        _ballShow = ballShow;
+        _ballStart = ballStart;
+        _ballHide = ballHide;
         _activeWeather = weather;
         _loading = false;
         _error = null;
       });
 
       _snapOutfitTo(weather);
+      _resetEffectIntrosFor(weather);
+      _onWeatherChanged(weather);
 
       _fxTicker?.dispose();
       _lastTick = Duration.zero;
@@ -308,6 +315,43 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         _loading = false;
         _error = e;
       });
+    }
+  }
+
+  void _resetEffectIntrosFor(String weather) {
+    for (final effect in _effects) {
+      final active = effect.weathers.contains(weather);
+      if (!active) {
+        _effectIntroDone.remove(effect.artboard);
+        continue;
+      }
+      if (_effectIntroDone.contains(effect.artboard)) continue;
+      for (final anim in _effectIntros[effect.artboard] ?? const []) {
+        anim.time = 0;
+      }
+      for (final anim in _effectLoops[effect.artboard] ?? const []) {
+        anim.time = 0;
+      }
+    }
+  }
+
+  void _onWeatherChanged(String weather) {
+    final wasHeat = _activeWeather == WeatherType.heatwave;
+    final isHeat = weather == WeatherType.heatwave;
+
+    _resetEffectIntrosFor(weather);
+
+    if (isHeat && !wasHeat) {
+      // Ball enters heatwave screen.
+      _ballExiting = false;
+      _ballVisible = true;
+      _ballShow?.time = 0;
+      _ballStart?.time = 0;
+      _ballHide?.time = 0;
+    } else if (!isHeat && (wasHeat || _ballVisible)) {
+      // Ball exits on every other screen.
+      _ballExiting = true;
+      _ballHide?.time = 0;
     }
   }
 
@@ -342,9 +386,26 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
 
     for (final effect in _effects) {
       if (!effect.weathers.contains(_activeWeather)) continue;
-      final anims = _effectLoops[effect.artboard];
-      if (anims == null || anims.isEmpty) continue;
-      for (final anim in anims) {
+      final intros = _effectIntros[effect.artboard] ?? const <rive.Animation>[];
+      final loops = _effectLoops[effect.artboard] ?? const <rive.Animation>[];
+      if (intros.isEmpty && loops.isEmpty) continue;
+
+      var introsComplete = true;
+      for (final anim in intros) {
+        if (anim.duration > 0 && anim.time >= anim.duration) {
+          anim.time = anim.duration;
+          anim.apply();
+        } else {
+          anim.advanceAndApply(dt);
+          introsComplete = false;
+        }
+      }
+      if (introsComplete) {
+        _effectIntroDone.add(effect.artboard);
+      }
+
+      // Continuous FX: sun glow/rotation, rain, leaves, snow, clouds.
+      for (final anim in loops) {
         if (anim.duration > 0 && anim.time >= anim.duration) {
           anim.time = 0;
         }
@@ -353,8 +414,44 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       _effectControllers[effect.artboard]?.active = true;
     }
 
-    for (final c in _dayAvoControllers.values) {
-      c.active = true;
+    // Beach ball enter / exit
+    final ballController = _effectControllers['Beach ball'];
+    if (ballController != null) {
+      if (_ballExiting) {
+        final hide = _ballHide;
+        if (hide != null) {
+          final playing = hide.advanceAndApply(dt);
+          if (!playing ||
+              (hide.duration > 0 && hide.time >= hide.duration)) {
+            _ballExiting = false;
+            _ballVisible = false;
+            hide.time = hide.duration;
+            hide.apply();
+          }
+        } else {
+          _ballExiting = false;
+          _ballVisible = false;
+        }
+        ballController.active = true;
+      } else if (_activeWeather == WeatherType.heatwave && _ballVisible) {
+        final show = _ballShow;
+        final start = _ballStart;
+        if (show != null) {
+          if (show.duration > 0 && show.time >= show.duration) {
+            show.time = show.duration;
+            show.apply();
+          } else {
+            show.advanceAndApply(dt);
+          }
+        }
+        if (start != null) {
+          if (start.duration > 0 && start.time >= start.duration) {
+            start.time = 0; // keep bouncing/rolling while heatwave stays
+          }
+          start.advanceAndApply(dt);
+        }
+        ballController.active = true;
+      }
     }
   }
 
@@ -391,6 +488,17 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   bool _isPrecipitation(String artboard) =>
       artboard == 'WEATHER RAIN' || artboard == 'weather snow MEDIUM';
 
+  bool _showEffect(String artboard) {
+    if (artboard == 'Beach ball') {
+      return _ballVisible || _ballExiting;
+    }
+    final effect = _effects.cast<_EffectLayer?>().firstWhere(
+          (e) => e?.artboard == artboard,
+          orElse: () => null,
+        );
+    return effect?.weathers.contains(_activeWeather) ?? false;
+  }
+
   @override
   void dispose() {
     _fxTicker?.dispose();
@@ -398,9 +506,6 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       c.dispose();
     }
     for (final c in _effectControllers.values) {
-      c.dispose();
-    }
-    for (final c in _dayAvoControllers.values) {
       c.dispose();
     }
     _main?.instance.dispose();
@@ -439,99 +544,75 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       );
     }
 
+    final atmosphere = [
+      for (final effect in _effects)
+        if (!_isPrecipitation(effect.artboard)) effect.artboard,
+      'Beach ball',
+    ];
+    final precipitation = [
+      for (final effect in _effects)
+        if (_isPrecipitation(effect.artboard)) effect.artboard,
+    ];
+
     return Scaffold(
       backgroundColor: const Color(0xFF9EC9E6),
       body: SafeArea(
         child: Center(
           child: AspectRatio(
             aspectRatio: 9 / 19.5,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final w = constraints.maxWidth;
-                final h = constraints.maxHeight;
-                // Mini avocados sit in the forecast row slots.
-                final slotW = w / 4;
-                final avoSize = slotW * 0.55;
-                final avoBottom = h * 0.07;
-
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // Fill weather background
-                    rive.RiveWidget(
-                      controller: _uiControllers[0],
-                      fit: rive.Fit.cover,
-                      alignment: _uiLayers[0].align,
-                    ),
-                    for (final effect in _effects)
-                      if (!_isPrecipitation(effect.artboard) &&
-                          _effectControllers.containsKey(effect.artboard))
-                        IgnorePointer(
-                          child: Visibility(
-                            visible:
-                                effect.weathers.contains(_activeWeather),
-                            maintainState: true,
-                            maintainAnimation: true,
-                            child: rive.RiveWidget(
-                              controller:
-                                  _effectControllers[effect.artboard]!,
-                              fit: rive.Fit.contain,
-                              alignment: Alignment.center,
-                            ),
-                          ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                rive.RiveWidget(
+                  controller: _uiControllers[0],
+                  fit: rive.Fit.cover,
+                  alignment: _uiLayers[0].align,
+                ),
+                for (final name in atmosphere)
+                  if (_effectControllers.containsKey(name))
+                    IgnorePointer(
+                      child: Visibility(
+                        visible: _showEffect(name),
+                        maintainState: true,
+                        maintainAnimation: true,
+                        child: rive.RiveWidget(
+                          controller: _effectControllers[name]!,
+                          fit: rive.Fit.contain,
+                          alignment: Alignment.center,
                         ),
-                    rive.RiveWidget(
-                      controller: _uiControllers[1],
-                      fit: rive.Fit.contain,
-                      alignment: _uiLayers[1].align,
+                      ),
                     ),
-                    rive.RiveWidget(
-                      controller: _uiControllers[2],
-                      fit: rive.Fit.contain,
-                      alignment: _uiLayers[2].align,
-                    ),
-                    for (final effect in _effects)
-                      if (_isPrecipitation(effect.artboard) &&
-                          _effectControllers.containsKey(effect.artboard))
-                        IgnorePointer(
-                          child: Visibility(
-                            visible:
-                                effect.weathers.contains(_activeWeather),
-                            maintainState: true,
-                            maintainAnimation: true,
-                            child: rive.RiveWidget(
-                              controller:
-                                  _effectControllers[effect.artboard]!,
-                              fit: rive.Fit.contain,
-                              alignment: Alignment.center,
-                            ),
-                          ),
+                rive.RiveWidget(
+                  controller: _uiControllers[1],
+                  fit: rive.Fit.contain,
+                  alignment: _uiLayers[1].align,
+                ),
+                rive.RiveWidget(
+                  controller: _uiControllers[2],
+                  fit: rive.Fit.contain,
+                  alignment: _uiLayers[2].align,
+                ),
+                for (final name in precipitation)
+                  if (_effectControllers.containsKey(name))
+                    IgnorePointer(
+                      child: Visibility(
+                        visible: _showEffect(name),
+                        maintainState: true,
+                        maintainAnimation: true,
+                        child: rive.RiveWidget(
+                          controller: _effectControllers[name]!,
+                          fit: rive.Fit.contain,
+                          alignment: Alignment.center,
                         ),
-                    rive.RiveWidget(
-                      controller: _uiControllers[3],
-                      fit: rive.Fit.contain,
-                      alignment: _uiLayers[3].align,
+                      ),
                     ),
-                    // Day-row avocados: Wed = snow, Thu = rainy, etc.
-                    for (var i = 0; i < _dayWeathers.length; i++)
-                      if (_dayAvoControllers[_dayWeathers[i]] != null)
-                        Positioned(
-                          left: slotW * i + (slotW - avoSize) / 2,
-                          bottom: avoBottom,
-                          width: avoSize,
-                          height: avoSize,
-                          child: IgnorePointer(
-                            child: rive.RiveWidget(
-                              controller:
-                                  _dayAvoControllers[_dayWeathers[i]]!,
-                              fit: rive.Fit.contain,
-                              alignment: Alignment.center,
-                            ),
-                          ),
-                        ),
-                  ],
-                );
-              },
+                // Forecast buttons — icons + temps only (no avocados).
+                rive.RiveWidget(
+                  controller: _uiControllers[3],
+                  fit: rive.Fit.contain,
+                  alignment: _uiLayers[3].align,
+                ),
+              ],
             ),
           ),
         ),
