@@ -402,14 +402,13 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       }
       if (introsComplete) {
         _effectIntroDone.add(effect.artboard);
-      }
-
-      // Continuous FX: sun glow/rotation, rain, leaves, snow, clouds.
-      for (final anim in loops) {
-        if (anim.duration > 0 && anim.time >= anim.duration) {
-          anim.time = 0;
+        // Continuous FX only after intro settles (keeps sun rotation intact).
+        for (final anim in loops) {
+          if (anim.duration > 0 && anim.time >= anim.duration) {
+            anim.time = 0;
+          }
+          anim.advanceAndApply(dt);
         }
-        anim.advanceAndApply(dt);
       }
       _effectControllers[effect.artboard]?.active = true;
     }
