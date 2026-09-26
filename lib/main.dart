@@ -68,13 +68,15 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   String _outfitWeather = WeatherType.rainy;
   String? _pendingOutfitWeather;
 
-  /// Beach ball enter/exit. The .riv Beach ball artboard stays empty when
-  /// driven from runtime (SM has no inputs; Start/SHOW/Hide don't paint),
-  /// so we animate a matching Flutter beach ball instead.
+  /// Beach ball from weatherbuddy.riv (375×69 strip).
+  /// Start = rolls left→right; Hide = exits. Use SingleAnimationPainter — the
+  /// artboard's State Machine has no inputs and hides the ball by default.
+  rive.Artboard? _ballArtboard;
+  rive.SingleAnimationPainter? _ballPainter;
+  String? _ballAnimName;
   var _ballVisible = false;
   var _ballExiting = false;
-  late final AnimationController _ballMotion;
-  late final Animation<Alignment> _ballAlign;
+  static const _ballAspect = 375.0 / 69.0;
 
   Object? _error;
   var _loading = true;
@@ -142,14 +144,6 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   @override
   void initState() {
     super.initState();
-    _ballMotion = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
-    _ballAlign = AlignmentTween(
-      begin: const Alignment(1.7, 0.45),
-      end: const Alignment(0.72, 0.32),
-    ).animate(CurvedAnimation(parent: _ballMotion, curve: Curves.easeOutBack));
     _bootstrap();
   }
 
@@ -163,6 +157,21 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       artboardSelector: rive.ArtboardSelector.byName(artboard),
       stateMachineSelector: rive.StateMachineSelector.byName(stateMachine),
     );
+  }
+
+  void _playBall(String animationName) {
+    final artboard = _ballArtboard;
+    if (artboard == null) return;
+    // New painter + ValueKey force a fresh Rive renderer ticker each play.
+    _ballPainter?.dispose();
+    final painter = rive.SingleAnimationPainter(
+      animationName,
+      fit: rive.Fit.fill,
+      alignment: Alignment.center,
+    );
+    painter.artboardChanged(artboard);
+    _ballPainter = painter;
+    _ballAnimName = animationName;
   }
 
   Future<void> _bootstrap() async {
@@ -219,6 +228,9 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       final main = MainViewModel(file, vmi);
       main.ensureFourForecastDays();
 
+      // Beach ball strip artboard (driven with SingleAnimationPainter, no SM).
+      final ballArtboard = file.artboard('Beach ball');
+
       // Forecast row: icons only (no avocados on the buttons).
       main.forecastDays[0].currentWeather = WeatherType.clearSkies;
       main.forecastDays[1].currentWeather = WeatherType.heatwave;
@@ -271,6 +283,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
         for (final c in effectControllers.values) {
           c.dispose();
         }
+        ballArtboard?.dispose();
         vmi.dispose();
         file.dispose();
         return;
@@ -299,6 +312,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
           ..clear()
           ..addAll(avoAnimsSafe);
         _avoOutro = avoOutro;
+        _ballArtboard = ballArtboard;
         _activeWeather = weather;
         _outfitWeather = weather;
         _outfitPhase = _OutfitPhase.idle;
@@ -404,6 +418,14 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
     if (bg != null) {
       bg.time = 0;
     }
+
+    // File Beach ball Start (left → right) with the Heatwave outfit rising.
+    if (weather == WeatherType.heatwave) {
+      _ballExiting = false;
+      _ballVisible = true;
+      _playBall('Start');
+      if (mounted) setState(() {});
+    }
   }
 
   void _onWeatherChanged(String weather) {
@@ -412,21 +434,23 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
 
     _resetEffectIntrosFor(weather);
 
-    if (isHeat && !wasHeat) {
-      _ballExiting = false;
-      _ballVisible = true;
-      _ballMotion.forward(from: 0);
-      if (mounted) setState(() {});
-    } else if (!isHeat && (wasHeat || _ballVisible)) {
+    // Enter is handled in _startOutfitIntro so Start rolls with the avocado.
+    if (!isHeat && (wasHeat || _ballVisible || _ballExiting)) {
       _ballExiting = true;
-      _ballMotion.reverse().whenComplete(() {
-        if (!mounted) return;
+      _ballVisible = true;
+      _playBall('Hide');
+      if (mounted) setState(() {});
+      // Hide duration in the file is ~1s.
+      Future<void>.delayed(const Duration(milliseconds: 1100), () {
+        if (!mounted || !_ballExiting) return;
         setState(() {
           _ballExiting = false;
           _ballVisible = false;
+          _ballPainter?.dispose();
+          _ballPainter = null;
+          _ballAnimName = null;
         });
       });
-      if (mounted) setState(() {});
     }
   }
 
@@ -596,13 +620,14 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   @override
   void dispose() {
     _fxTicker?.dispose();
-    _ballMotion.dispose();
     for (final c in _uiControllers) {
       c.dispose();
     }
     for (final c in _effectControllers.values) {
       c.dispose();
     }
+    _ballPainter?.dispose();
+    _ballArtboard?.dispose();
     _main?.instance.dispose();
     _file?.dispose();
     super.dispose();
@@ -700,24 +725,34 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
                         ),
                       ),
                     ),
-                // Beach ball enters on Heatwave, exits on other screens.
-                if (_ballVisible || _ballExiting)
+                // File Beach ball (375×69): Start rolls left → right on Heatwave.
+                if ((_ballVisible || _ballExiting) &&
+                    _ballArtboard != null &&
+                    _ballPainter != null)
                   IgnorePointer(
-                    child: AnimatedBuilder(
-                      animation: _ballAlign,
-                      builder: (context, child) {
-                        return Align(
-                          alignment: _ballAlign.value,
-                          child: child,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final height = width / _ballAspect;
+                        // Sit near avocado mid/lower body (matches strip ground).
+                        final top = constraints.maxHeight * 0.48 - height / 2;
+                        return Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Positioned(
+                              left: 0,
+                              width: width,
+                              top: top,
+                              height: height,
+                              child: rive.RiveArtboardWidget(
+                                key: ValueKey('beach-ball-$_ballAnimName'),
+                                artboard: _ballArtboard!,
+                                painter: _ballPainter!,
+                              ),
+                            ),
+                          ],
                         );
                       },
-                      child: FractionallySizedBox(
-                        widthFactor: 0.2,
-                        child: AspectRatio(
-                          aspectRatio: 1,
-                          child: CustomPaint(painter: _BeachBallPainter()),
-                        ),
-                      ),
                     ),
                   ),
                 // Forecast buttons — icons + temps only (no avocados).
@@ -733,44 +768,4 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       ),
     );
   }
-}
-
-class _BeachBallPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.shortestSide / 2;
-    final colors = <Color>[
-      const Color(0xFFE85D4C),
-      const Color(0xFFF5D76E),
-      const Color(0xFF4AA3DF),
-      const Color(0xFFF7F7F7),
-    ];
-    for (var i = 0; i < colors.length; i++) {
-      final start = -1.2 + (i * 1.55);
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        start,
-        1.55,
-        true,
-        Paint()..color = colors[i],
-      );
-    }
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = radius * 0.06
-        ..color = const Color(0x33000000),
-    );
-    canvas.drawCircle(
-      center.translate(-radius * 0.25, -radius * 0.28),
-      radius * 0.18,
-      Paint()..color = const Color(0x55FFFFFF),
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
