@@ -106,45 +106,19 @@
   </header>
 
   <div class="phone" aria-label="Phone preview frame">
-    <!-- Prefer the static HTML build; fall back to the Flutter dev server. -->
+    <!-- Flutter web "simulator" preview (same view as before). -->
     <iframe
       class="screen"
       id="app"
       title="Weather Buddy app"
-      src="preview/index.html"
+      src="http://127.0.0.1:43123/"
       allow="fullscreen"
     ></iframe>
   </div>
 
   <footer>
-    Static build: <code>preview/index.html</code>
-    · Dev server: <code>http://127.0.0.1:43123</code>
+    Open the app directly if the frame is blank:
+    <a href="http://127.0.0.1:43123/" style="color:#9ec9e6">http://127.0.0.1:43123/</a>
   </footer>
-
-  <script>
-    (function () {
-      var frame = document.getElementById("app");
-      var triedDev = false;
-      frame.addEventListener("error", function () {
-        if (triedDev) return;
-        triedDev = true;
-        frame.src = "http://127.0.0.1:43123/";
-      });
-      // If static preview isn't served from this origin, switch to the running app.
-      setTimeout(function () {
-        try {
-          var doc = frame.contentDocument;
-          if (!doc || !doc.body || doc.body.childElementCount === 0) {
-            if (!triedDev) {
-              triedDev = true;
-              frame.src = "http://127.0.0.1:43123/";
-            }
-          }
-        } catch (_) {
-          // Cross-origin means the iframe loaded a live server — that's fine.
-        }
-      }, 2500);
-    })();
-  </script>
 </body>
 </html>
