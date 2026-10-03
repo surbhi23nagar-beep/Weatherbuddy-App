@@ -69,17 +69,20 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   String? _pendingOutfitWeather;
 
   /// Beach ball from weatherbuddy.riv (375×69 strip).
-  /// Start = rolls left→right; Hide = exits. Separate from heatwave sun ripple.
-  /// Positioned at avocado height — not in the red-sun ripple zone at the top.
+  /// Start = rolls left→right; Hide = exits. Decoded with Factory.flutter so
+  /// it paints via Flutter canvas (native textures fight the other layers).
+  /// Separate from heatwave red-sun ripple idle at the top.
+  /// Positioned at avocado height, clear of the sun ripple zone.
+  rive.File? _ballFile;
   rive.Artboard? _ballArtboard;
   rive.SingleAnimationPainter? _ballPainter;
   String? _ballAnimName;
   var _ballVisible = false;
   var _ballExiting = false;
   static const _ballAspect = 375.0 / 69.0;
-  /// Vertical align for the strip (0 = center). Lower = avocado feet, clear of
-  /// the heatwave red-sun ripple that lives in the top of the frame.
-  static const _ballAlignY = 0.42;
+  /// Vertical align for the strip (0 = center). Lower = avocado body/feet,
+  /// well below the heatwave red-sun ripple rings.
+  static const _ballAlignY = 0.48;
 
   Object? _error;
   var _loading = true;
@@ -164,8 +167,16 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
 
   void _playBall(String animationName) {
     final artboard = _ballArtboard;
-    if (artboard == null) return;
-    // Fresh painter so Start/Hide restarts from t=0 (ValueKey remounts renderer).
+    if (artboard == null) {
+      debugPrint('Beach ball: artboard missing');
+      return;
+    }
+    final hasAnim = artboard.animationNamed(animationName) != null;
+    debugPrint(
+      'Beach ball: play $animationName '
+      'size=${artboard.width}x${artboard.height} hasAnim=$hasAnim '
+      'factory=${artboard.riveFactory == rive.Factory.flutter ? "flutter" : "rive"}',
+    );
     _ballPainter?.dispose();
     final painter = rive.SingleAnimationPainter(
       animationName,
@@ -231,8 +242,13 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       final main = MainViewModel(file, vmi);
       main.ensureFourForecastDays();
 
-      // Beach ball strip artboard (driven with SingleAnimationPainter, no SM).
-      final ballArtboard = file.artboard('Beach ball');
+      // Beach ball: separate Factory.flutter decode so canvas paint isn't
+      // blanked by the many Factory.rive textures used for the rest of the UI.
+      final ballFile = await rive.File.asset(
+        'assets/weatherbuddy.riv',
+        riveFactory: rive.Factory.flutter,
+      );
+      final ballArtboard = ballFile?.artboard('Beach ball');
 
       // Forecast row: icons only (no avocados on the buttons).
       main.forecastDays[0].currentWeather = WeatherType.clearSkies;
@@ -287,6 +303,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
           c.dispose();
         }
         ballArtboard?.dispose();
+        ballFile?.dispose();
         vmi.dispose();
         file.dispose();
         return;
@@ -315,6 +332,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
           ..clear()
           ..addAll(avoAnimsSafe);
         _avoOutro = avoOutro;
+        _ballFile = ballFile;
         _ballArtboard = ballArtboard;
         _activeWeather = weather;
         _outfitWeather = weather;
@@ -422,12 +440,18 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       bg.time = 0;
     }
 
-    // File Beach ball Start (left → right) with the Heatwave outfit rising.
+    // File Beach ball: Start rolls left → right, then SHOW parks it at avocado
+    // height — clear of the red-sun ripple at the top.
     if (weather == WeatherType.heatwave) {
       _ballExiting = false;
       _ballVisible = true;
       _playBall('Start');
       if (mounted) setState(() {});
+      Future<void>.delayed(const Duration(milliseconds: 1100), () {
+        if (!mounted || !_ballVisible || _ballExiting) return;
+        if (_activeWeather != WeatherType.heatwave) return;
+        setState(() => _playBall('SHOW'));
+      });
     }
   }
 
@@ -631,6 +655,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
     }
     _ballPainter?.dispose();
     _ballArtboard?.dispose();
+    _ballFile?.dispose();
     _main?.instance.dispose();
     _file?.dispose();
     super.dispose();
@@ -729,23 +754,37 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
                       ),
                     ),
                 // File Beach ball (375×69): Start rolls left → right at avocado
-                // height. Kept below the heatwave red-sun ripple (top of frame).
-                if ((_ballVisible || _ballExiting) &&
-                    _ballArtboard != null &&
-                    _ballPainter != null)
+                // height — below the heatwave red-sun ripple (top of frame).
+                if (_ballArtboard != null)
                   Positioned.fill(
                     child: IgnorePointer(
-                      child: Align(
-                        alignment: const Alignment(0, _ballAlignY),
-                        child: FractionallySizedBox(
-                          widthFactor: 1,
-                          child: AspectRatio(
-                            aspectRatio: _ballAspect,
-                            child: rive.RiveArtboardWidget(
-                              key: ValueKey('beach-ball-$_ballAnimName'),
-                              artboard: _ballArtboard!,
-                              painter: _ballPainter!,
-                            ),
+                      child: Opacity(
+                        opacity: (_ballVisible || _ballExiting) &&
+                                _ballPainter != null
+                            ? 1
+                            : 0,
+                        child: Align(
+                          alignment: const Alignment(0, _ballAlignY),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final width = constraints.maxWidth.isFinite
+                                  ? constraints.maxWidth
+                                  : MediaQuery.sizeOf(context).width;
+                              final height = width / _ballAspect;
+                              return SizedBox(
+                                width: width,
+                                height: height,
+                                child: _ballPainter == null
+                                    ? const SizedBox.shrink()
+                                    : rive.RiveArtboardWidget(
+                                        key: ValueKey(
+                                          'beach-ball-$_ballAnimName',
+                                        ),
+                                        artboard: _ballArtboard!,
+                                        painter: _ballPainter!,
+                                      ),
+                              );
+                            },
                           ),
                         ),
                       ),
