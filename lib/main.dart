@@ -69,14 +69,17 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   String? _pendingOutfitWeather;
 
   /// Beach ball from weatherbuddy.riv (375×69 strip).
-  /// Start = rolls left→right; Hide = exits. Use SingleAnimationPainter — the
-  /// artboard's State Machine has no inputs and hides the ball by default.
+  /// Start = rolls left→right; Hide = exits. Separate from heatwave sun ripple.
+  /// Positioned at avocado height — not in the red-sun ripple zone at the top.
   rive.Artboard? _ballArtboard;
   rive.SingleAnimationPainter? _ballPainter;
   String? _ballAnimName;
   var _ballVisible = false;
   var _ballExiting = false;
   static const _ballAspect = 375.0 / 69.0;
+  /// Vertical align for the strip (0 = center). Lower = avocado feet, clear of
+  /// the heatwave red-sun ripple that lives in the top of the frame.
+  static const _ballAlignY = 0.42;
 
   Object? _error;
   var _loading = true;
@@ -162,7 +165,7 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   void _playBall(String animationName) {
     final artboard = _ballArtboard;
     if (artboard == null) return;
-    // New painter + ValueKey force a fresh Rive renderer ticker each play.
+    // Fresh painter so Start/Hide restarts from t=0 (ValueKey remounts renderer).
     _ballPainter?.dispose();
     final painter = rive.SingleAnimationPainter(
       animationName,
@@ -725,34 +728,27 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
                         ),
                       ),
                     ),
-                // File Beach ball (375×69): Start rolls left → right on Heatwave.
+                // File Beach ball (375×69): Start rolls left → right at avocado
+                // height. Kept below the heatwave red-sun ripple (top of frame).
                 if ((_ballVisible || _ballExiting) &&
                     _ballArtboard != null &&
                     _ballPainter != null)
-                  IgnorePointer(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final width = constraints.maxWidth;
-                        final height = width / _ballAspect;
-                        // Sit near avocado mid/lower body (matches strip ground).
-                        final top = constraints.maxHeight * 0.48 - height / 2;
-                        return Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Positioned(
-                              left: 0,
-                              width: width,
-                              top: top,
-                              height: height,
-                              child: rive.RiveArtboardWidget(
-                                key: ValueKey('beach-ball-$_ballAnimName'),
-                                artboard: _ballArtboard!,
-                                painter: _ballPainter!,
-                              ),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Align(
+                        alignment: const Alignment(0, _ballAlignY),
+                        child: FractionallySizedBox(
+                          widthFactor: 1,
+                          child: AspectRatio(
+                            aspectRatio: _ballAspect,
+                            child: rive.RiveArtboardWidget(
+                              key: ValueKey('beach-ball-$_ballAnimName'),
+                              artboard: _ballArtboard!,
+                              painter: _ballPainter!,
                             ),
-                          ],
-                        );
-                      },
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 // Forecast buttons — icons + temps only (no avocados).
