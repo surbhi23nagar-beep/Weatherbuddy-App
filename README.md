@@ -40,22 +40,35 @@ flutter run -d web-server --web-hostname=0.0.0.0 --web-port=43123
 
 Open [http://127.0.0.1:43123](http://127.0.0.1:43123).
 
-## HTML preview
-
-Static web build lives in **`preview/index.html`**. Phone-framed launcher: **`preview.html`**.
+## HTML preview (local)
 
 ```bash
-# Rebuild the HTML export
-flutter build web --release -o preview
-
-# Serve (required — don't open the file via file://)
-python3 -m http.server 43125 --directory preview
-# → http://127.0.0.1:43125/
-
-# Or serve the whole repo (phone frame + preview/)
-python3 -m http.server 43125
-# → http://127.0.0.1:43125/preview.html
+flutter build web --release --base-href / -o preview
+cd preview && python3 -m http.server 43210
+# → http://127.0.0.1:43210/
 ```
+
+Dev “simulator” while coding: `flutter run -d web-server --web-port=43123` → [http://127.0.0.1:43123](http://127.0.0.1:43123)
+
+## Share a live HTML link with others
+
+`127.0.0.1` only works on **your** machine. To let others open it:
+
+```bash
+# 1) Build static HTML
+flutter build web --release --base-href / -o preview
+
+# 2) Serve it
+cd preview && python3 -m http.server 43210
+
+# 3) Tunnel to a public URL (pick one)
+cloudflared tunnel --url http://127.0.0.1:43210
+# → https://….trycloudflare.com   ← share this link
+
+# or: npx localtunnel --port 43210
+```
+
+For a permanent site, deploy the `preview/` folder to **Netlify**, **Vercel**, **Cloudflare Pages**, or **GitHub Pages**.
 
 ## Prefer a single artboard?
 

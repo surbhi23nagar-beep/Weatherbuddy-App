@@ -79,10 +79,10 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
   String? _ballAnimName;
   var _ballVisible = false;
   var _ballExiting = false;
+  int _ballGen = 0; // cancels stale Start→SHOW / Hide timers
   static const _ballAspect = 375.0 / 69.0;
-  /// Vertical align for the strip (0 = center). Lower = avocado body/feet,
-  /// well below the heatwave red-sun ripple rings.
-  static const _ballAlignY = 0.48;
+  /// Near avocado legs (Alignment y; 0 = center). Clear of sun ripple at top.
+  static const _ballAlignY = 0.62;
 
   Object? _error;
   var _loading = true;
@@ -440,19 +440,46 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
       bg.time = 0;
     }
 
-    // File Beach ball: Start rolls left → right, then SHOW parks it at avocado
-    // height — clear of the red-sun ripple at the top.
+    // File Beach ball near the legs: Start (left→right), then SHOW parks it.
+    // Any other day → ensure the ball is gone.
     if (weather == WeatherType.heatwave) {
+      final gen = ++_ballGen;
       _ballExiting = false;
       _ballVisible = true;
       _playBall('Start');
       if (mounted) setState(() {});
       Future<void>.delayed(const Duration(milliseconds: 1100), () {
-        if (!mounted || !_ballVisible || _ballExiting) return;
-        if (_activeWeather != WeatherType.heatwave) return;
+        if (!mounted || gen != _ballGen) return;
+        if (!_ballVisible || _ballExiting) return;
+        if (_activeWeather != WeatherType.heatwave &&
+            _outfitWeather != WeatherType.heatwave) {
+          return;
+        }
         setState(() => _playBall('SHOW'));
       });
+    } else if (_ballVisible || _ballExiting) {
+      _dismissBall();
     }
+  }
+
+  void _dismissBall() {
+    if (!_ballVisible && !_ballExiting) return;
+    final gen = ++_ballGen;
+    _ballExiting = true;
+    _ballVisible = true;
+    _playBall('Hide');
+    if (mounted) setState(() {});
+    // Hide timeline ~1s, then remove the layer.
+    Future<void>.delayed(const Duration(milliseconds: 1100), () {
+      if (!mounted || gen != _ballGen) return;
+      setState(() {
+        _ballExiting = false;
+        _ballVisible = false;
+        _ballPainter?.dispose();
+        _ballPainter = null;
+        _ballAnimName = null;
+      });
+    });
   }
 
   void _onWeatherChanged(String weather) {
@@ -461,23 +488,9 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
 
     _resetEffectIntrosFor(weather);
 
-    // Enter is handled in _startOutfitIntro so Start rolls with the avocado.
+    // Leaving Heatwave (any other day) → ball rolls out / goes away.
     if (!isHeat && (wasHeat || _ballVisible || _ballExiting)) {
-      _ballExiting = true;
-      _ballVisible = true;
-      _playBall('Hide');
-      if (mounted) setState(() {});
-      // Hide duration in the file is ~1s.
-      Future<void>.delayed(const Duration(milliseconds: 1100), () {
-        if (!mounted || !_ballExiting) return;
-        setState(() {
-          _ballExiting = false;
-          _ballVisible = false;
-          _ballPainter?.dispose();
-          _ballPainter = null;
-          _ballAnimName = null;
-        });
-      });
+      _dismissBall();
     }
   }
 
@@ -753,38 +766,23 @@ class _WeatherBuddyScreenState extends State<WeatherBuddyScreen>
                         ),
                       ),
                     ),
-                // File Beach ball (375×69): Start rolls left → right at avocado
-                // height — below the heatwave red-sun ripple (top of frame).
-                if (_ballArtboard != null)
+                // File Beach ball near avocado legs (not in sun-ripple zone).
+                if (_ballArtboard != null &&
+                    (_ballVisible || _ballExiting) &&
+                    _ballPainter != null)
                   Positioned.fill(
                     child: IgnorePointer(
-                      child: Opacity(
-                        opacity: (_ballVisible || _ballExiting) &&
-                                _ballPainter != null
-                            ? 1
-                            : 0,
-                        child: Align(
-                          alignment: const Alignment(0, _ballAlignY),
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final width = constraints.maxWidth.isFinite
-                                  ? constraints.maxWidth
-                                  : MediaQuery.sizeOf(context).width;
-                              final height = width / _ballAspect;
-                              return SizedBox(
-                                width: width,
-                                height: height,
-                                child: _ballPainter == null
-                                    ? const SizedBox.shrink()
-                                    : rive.RiveArtboardWidget(
-                                        key: ValueKey(
-                                          'beach-ball-$_ballAnimName',
-                                        ),
-                                        artboard: _ballArtboard!,
-                                        painter: _ballPainter!,
-                                      ),
-                              );
-                            },
+                      child: Align(
+                        alignment: const Alignment(0, _ballAlignY),
+                        child: FractionallySizedBox(
+                          widthFactor: 1,
+                          child: AspectRatio(
+                            aspectRatio: _ballAspect,
+                            child: rive.RiveArtboardWidget(
+                              key: ValueKey('beach-ball-$_ballAnimName'),
+                              artboard: _ballArtboard!,
+                              painter: _ballPainter!,
+                            ),
                           ),
                         ),
                       ),
