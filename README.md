@@ -40,35 +40,36 @@ flutter run -d web-server --web-hostname=0.0.0.0 --web-port=43123
 
 Open [http://127.0.0.1:43123](http://127.0.0.1:43123).
 
-## HTML preview (local)
+## Website files (HTML)
+
+The live web app (same files previously on the Cloudflare tunnel) is committed under **`docs/`**:
+
+- `docs/index.html` — app entry
+- `docs/main.dart.js`, `docs/canvaskit/`, `docs/assets/` — Flutter web runtime + Rive asset
+
+### Local preview
 
 ```bash
-flutter build web --release --base-href / -o preview
-cd preview && python3 -m http.server 43210
+cd docs && python3 -m http.server 43210
 # → http://127.0.0.1:43210/
 ```
 
-Dev “simulator” while coding: `flutter run -d web-server --web-port=43123` → [http://127.0.0.1:43123](http://127.0.0.1:43123)
-
-## Share a live HTML link with others
-
-`127.0.0.1` only works on **your** machine. To let others open it:
+Rebuild after code changes:
 
 ```bash
-# 1) Build static HTML
-flutter build web --release --base-href / -o preview
-
-# 2) Serve it
-cd preview && python3 -m http.server 43210
-
-# 3) Tunnel to a public URL (pick one)
-cloudflared tunnel --url http://127.0.0.1:43210
-# → https://….trycloudflare.com   ← share this link
-
-# or: npx localtunnel --port 43210
+flutter build web --release --base-href / -o docs
 ```
 
-For a permanent site, deploy the `preview/` folder to **Netlify**, **Vercel**, **Cloudflare Pages**, or **GitHub Pages**.
+### GitHub Pages (share with others)
+
+1. Repo → **Settings → Pages**
+2. Source: **Deploy from a branch**
+3. Branch: `main` / folder: **/docs** → Save
+4. Site URL will be like:  
+   `https://surbhi23nagar-beep.github.io/Weatherbuddy-App/`
+
+(If the app looks broken on Pages, rebuild with  
+`flutter build web --release --base-href /Weatherbuddy-App/ -o docs` and push again.)
 
 ## Prefer a single artboard?
 
